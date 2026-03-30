@@ -1,7 +1,7 @@
 {
   "name": "editorial-assistant-server",
-  "version": "2.0.0",
-  "description": "Server-side video renderer for Editorial Assistant — generates TikTok-ready MP4 from scenes",
+  "version": "3.0.0",
+  "description": "Server-side audio generator and webm-to-mp4 converter for Editorial Assistant",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -12,7 +12,7 @@
     "cors": "^2.8.5",
     "fluent-ffmpeg": "^2.1.2",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
-    "node-fetch": "^2.7.0"
+    "multer": "^1.4.5-lts.1"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -20,54 +20,41 @@ app.use(express.json({ limit: '10mb' }));
 const convertedFiles = new Map();
 const CLEANUP_MS = 15 * 60 * 1000;
 
-// Health check
 app.get('/', (req, res) => {
   res.json({ status: 'Editorial Assistant Server running' });
 });
 
-// Generate audio for ONE scene at a time
-// This keeps each request under 10 seconds
 app.post('/audio', async (req, res) => {
   const { text, voiceId, elevenLabsKey } = req.body;
-
   if (!text || !elevenLabsKey) {
     return res.status(400).json({ error: 'Missing text or API key' });
   }
-
   try {
     const audioBuffer = await generateElevenLabsAudio(
       text,
       voiceId || 'pNInz6obpgDQGcFmaJgB',
       elevenLabsKey
     );
-
-    // Return audio as base64 so browser can play it directly
     const base64Audio = audioBuffer.toString('base64');
-    res.json({
-      success: true,
-      audio: base64Audio,
-      mimeType: 'audio/mpeg'
-    });
-
+    res.json({ success: true, audio: base64Audio, mimeType: 'audio/mpeg' });
   } catch (err) {
     console.error('Audio error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// Convert webm to mp4 (fast — under 30 seconds)
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200 * 1024 * 1024 } });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 200 * 1024 * 1024 }
+});
 
 app.post('/convert', upload.single('video'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No video file' });
-
   const id = crypto.randomBytes(8).toString('hex');
   const inputPath = path.join(os.tmpdir(), `input_${id}.webm`);
   const outputPath = path.join(os.tmpdir(), `tiktok_${id}.mp4`);
-
   try {
     fs.writeFileSync(inputPath, req.file.buffer);
-
     await new Promise((resolve, reject) => {
       ffmpeg(inputPath)
         .outputOptions([
@@ -83,20 +70,17 @@ app.post('/convert', upload.single('video'), async (req, res) => {
         .on('error', reject)
         .run();
     });
-
     convertedFiles.set(id, outputPath);
     setTimeout(() => {
       try { fs.unlinkSync(outputPath); } catch(e) {}
       convertedFiles.delete(id);
     }, CLEANUP_MS);
-
     const host = req.get('host');
     const protocol = req.headers['x-forwarded-proto'] || 'https';
     res.json({
       success: true,
       downloadUrl: `${protocol}://${host}/download/${id}`
     });
-
   } catch (err) {
     res.status(500).json({ error: err.message });
   } finally {
@@ -104,7 +88,6 @@ app.post('/convert', upload.single('video'), async (req, res) => {
   }
 });
 
-// Serve converted MP4
 app.get('/download/:id', (req, res) => {
   const filePath = convertedFiles.get(req.params.id);
   if (!filePath || !fs.existsSync(filePath)) {
@@ -116,7 +99,6 @@ app.get('/download/:id', (req, res) => {
   fs.createReadStream(filePath).pipe(res);
 });
 
-// ElevenLabs helper
 function generateElevenLabsAudio(text, voiceId, apiKey) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
@@ -124,7 +106,6 @@ function generateElevenLabsAudio(text, voiceId, apiKey) {
       model_id: 'eleven_monolingual_v1',
       voice_settings: { stability: 0.75, similarity_boost: 0.85, style: 0.15 }
     });
-
     const options = {
       hostname: 'api.elevenlabs.io',
       path: `/v1/text-to-speech/${voiceId}`,
@@ -135,7 +116,6 @@ function generateElevenLabsAudio(text, voiceId, apiKey) {
         'Content-Length': Buffer.byteLength(body)
       }
     };
-
     const chunks = [];
     const req = https.request(options, (response) => {
       if (response.statusCode !== 200) {
@@ -147,7 +127,6 @@ function generateElevenLabsAudio(text, voiceId, apiKey) {
       response.on('data', chunk => chunks.push(chunk));
       response.on('end', () => resolve(Buffer.concat(chunks)));
     });
-
     req.on('error', reject);
     req.write(body);
     req.end();

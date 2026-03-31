@@ -4,6 +4,9 @@ services:
     env: node
     buildCommand: apt-get update -qq && apt-get install -y fonts-dejavu-core && npm install
     startCommand: node index.js
+    plan: starter
     envVars:
       - key: NODE_ENV
         value: production
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=512

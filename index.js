@@ -86,11 +86,13 @@ async function renderScene(scene, voiceId, apiKey, id, idx) {
   const audioPath = path.join(tmpDir, `audio_${id}_${idx}.mp3`);
   const clipPath  = path.join(tmpDir, `clip_${id}_${idx}.mp4`);
 
-  const hasImage     = !!scene.imageUrl;
+  const hasImage     = !!(scene.imageUrl && scene.imageUrl.trim());
   const hasNarration = !!(scene.narration && scene.narration.trim() && apiKey && voiceId);
 
   try {
-    if (hasImage)     await downloadImage(scene.imageUrl, imgPath);
+    // Fix 1 — request smaller image to reduce memory
+    const imageUrl = scene.imageUrl ? scene.imageUrl.replace(/&w=\d+/, '') + '&w=1080' : null;
+    if (imageUrl) await downloadImage(imageUrl, imgPath);
     if (hasNarration) {
       const buf = await generateElevenLabsAudio(scene.narration, voiceId, apiKey);
       fs.writeFileSync(audioPath, buf);
@@ -148,8 +150,10 @@ async function renderScene(scene, voiceId, apiKey, id, idx) {
       const opts = [
         '-vf', filterStr,
         '-c:v libx264',
-        '-preset fast',
+        '-preset ultrafast',
         '-crf 23',
+        '-b:v 1000k',
+        '-threads 1',
         '-pix_fmt yuv420p',
         '-movflags +faststart',
       ];
@@ -167,11 +171,16 @@ async function renderScene(scene, voiceId, apiKey, id, idx) {
         .run();
     });
 
-    return clipPath;
-
-  } finally {
+    // Fix 3 — delete temp files immediately after ffmpeg finishes, before next scene
     try { fs.unlinkSync(imgPath); }   catch(e) {}
     try { fs.unlinkSync(audioPath); } catch(e) {}
+
+    return clipPath;
+
+  } catch(err) {
+    try { fs.unlinkSync(imgPath); }   catch(e) {}
+    try { fs.unlinkSync(audioPath); } catch(e) {}
+    throw err;
   }
 }
 

@@ -16,10 +16,10 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors({ origin: '*' }));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
 
-const convertedFiles = new Map();
-const renderedFiles = new Map();
+// Single map for all downloadable files (render + convert)
+const downloadFiles = new Map();
 const CLEANUP_MS = 15 * 60 * 1000;
 
 const W = 1080, H = 1920;
@@ -27,7 +27,18 @@ const FONT = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf';
 
 // ── Helpers ────────────────────────────────────────────
 
-function wrapText(text, maxChars) {
+// Split narration into lines of 5 words each
+function wrapWords(text, wordsPerLine) {
+  const words = String(text).trim().split(/\s+/);
+  const lines = [];
+  for (let i = 0; i < words.length; i += wordsPerLine) {
+    lines.push(words.slice(i, i + wordsPerLine).join(' '));
+  }
+  return lines;
+}
+
+// Wrap hook text by character width
+function wrapChars(text, maxChars) {
   const words = String(text).split(' ');
   const lines = [];
   let cur = '';
@@ -40,6 +51,7 @@ function wrapText(text, maxChars) {
   return lines;
 }
 
+// Escape special chars for FFmpeg drawtext filter
 function esc(str) {
   return String(str)
     .replace(/\\/g, '\\\\')
@@ -84,31 +96,39 @@ async function renderScene(scene, voiceId, apiKey, id, idx) {
       fs.writeFileSync(audioPath, buf);
     }
 
-    const hookLines = wrapText(scene.overlay_text || '', 22).slice(0, 2);
-    const narLines  = wrapText(scene.narration || '', 30).slice(0, 3);
-    const hookY     = Math.floor(H * 0.08);
-    const narY      = Math.floor(H * 0.42);
+    // Hook text: top 12% of frame, bold white 52px, max 2 lines
+    const hookLines = wrapChars(scene.overlay_text || '', 22).slice(0, 2);
+    const hookY     = Math.floor(H * 0.12);
+
+    // Narration text: center at 55%, white 44px, 5 words per line, max 4 lines
+    const narLines  = wrapWords(scene.narration || '', 5).slice(0, 4);
+    const narY      = Math.floor(H * 0.55);
 
     const filters = [
-      `scale=${W}:${H}:force_original_aspect_ratio=decrease`,
-      `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=black`,
+      // Scale image to fill full frame (cover, not letterbox)
+      `scale=${W}:${H}:force_original_aspect_ratio=increase`,
+      `crop=${W}:${H}`,
+      // Dark overlay for readability
       `drawbox=x=0:y=0:w=iw:h=ih:color=black@0.5:t=fill`,
     ];
 
+    // Hook text — bold white, shadow, top 12%
     hookLines.forEach((line, i) => {
       filters.push(
-        `drawtext=fontfile='${FONT}':text='${esc(line)}':x=(w-text_w)/2:y=${hookY + i * 68}:fontsize=56:fontcolor=white:shadowcolor=black@0.7:shadowx=2:shadowy=2`
+        `drawtext=fontfile='${FONT}':text='${esc(line)}':x=(w-text_w)/2:y=${hookY + i * 68}:fontsize=52:fontcolor=white:shadowcolor=black@0.8:shadowx=3:shadowy=3`
       );
     });
 
+    // Narration text — white 44px, center 55%
     narLines.forEach((line, i) => {
       filters.push(
-        `drawtext=fontfile='${FONT}':text='${esc(line)}':x=(w-text_w)/2:y=${narY + i * 54}:fontsize=44:fontcolor=white:shadowcolor=black@0.7:shadowx=1:shadowy=1`
+        `drawtext=fontfile='${FONT}':text='${esc(line)}':x=(w-text_w)/2:y=${narY + i * 54}:fontsize=44:fontcolor=white:shadowcolor=black@0.7:shadowx=2:shadowy=2`
       );
     });
 
+    // Branding — rose color bottom right
     filters.push(
-      `drawtext=fontfile='${FONT}':text='angelakim87':x=w-text_w-30:y=h-50:fontsize=34:fontcolor=#c9a99a@0.8`
+      `drawtext=fontfile='${FONT}':text='angelakim87':x=w-text_w-30:y=h-60:fontsize=34:fontcolor=#c9a99a@0.85`
     );
 
     const filterStr = filters.join(',');
@@ -158,9 +178,10 @@ async function renderScene(scene, voiceId, apiKey, id, idx) {
 // ── Routes ─────────────────────────────────────────────
 
 app.get('/', (req, res) => {
-  res.json({ status: 'Editorial Assistant Server running' });
+  res.json({ status: 'running' });
 });
 
+// Generate audio for one scene — returns base64 MP3
 app.post('/audio', async (req, res) => {
   const { text, voiceId, elevenLabsKey } = req.body;
   if (!text || !elevenLabsKey) {
@@ -172,16 +193,15 @@ app.post('/audio', async (req, res) => {
       voiceId || 'pNInz6obpgDQGcFmaJgB',
       elevenLabsKey
     );
-    const base64Audio = audioBuffer.toString('base64');
-    res.json({ success: true, audio: base64Audio, mimeType: 'audio/mpeg' });
+    res.json({ success: true, audio: audioBuffer.toString('base64'), mimeType: 'audio/mpeg' });
   } catch (err) {
     console.error('Audio error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// Render full video server-side — browser sends scene data, server returns MP4 download URL
-app.post('/render-video', async (req, res) => {
+// Full server-side video render — receives scene data, returns MP4 download URL
+app.post('/render', async (req, res) => {
   const { scenes, elevenLabsKey, voiceId } = req.body;
   if (!scenes || !scenes.length) {
     return res.status(400).json({ error: 'No scenes provided' });
@@ -199,6 +219,7 @@ app.post('/render-video', async (req, res) => {
       clipPaths.push(clipPath);
     }
 
+    console.log('Concatenating clips...');
     if (clipPaths.length === 1) {
       fs.copyFileSync(clipPaths[0], outputPath);
     } else {
@@ -217,15 +238,16 @@ app.post('/render-video', async (req, res) => {
       try { fs.unlinkSync(concatFile); } catch(e) {}
     }
 
-    renderedFiles.set(id, outputPath);
+    downloadFiles.set(id, outputPath);
     setTimeout(() => {
       try { fs.unlinkSync(outputPath); } catch(e) {}
-      renderedFiles.delete(id);
+      downloadFiles.delete(id);
     }, CLEANUP_MS);
 
     const proto = req.headers['x-forwarded-proto'] || 'https';
     const host  = req.get('host');
-    res.json({ success: true, downloadUrl: `${proto}://${host}/rendered/${id}` });
+    console.log(`Render complete: ${id}`);
+    res.json({ success: true, downloadUrl: `${proto}://${host}/download/${id}` });
 
   } catch (err) {
     console.error('Render error:', err.message);
@@ -235,17 +257,7 @@ app.post('/render-video', async (req, res) => {
   }
 });
 
-app.get('/rendered/:id', (req, res) => {
-  const filePath = renderedFiles.get(req.params.id);
-  if (!filePath || !fs.existsSync(filePath)) {
-    return res.status(404).json({ error: 'File not found or expired' });
-  }
-  res.setHeader('Content-Type', 'video/mp4');
-  res.setHeader('Content-Disposition', 'attachment; filename="tiktok-video.mp4"');
-  res.setHeader('Cache-Control', 'no-cache');
-  fs.createReadStream(filePath).pipe(res);
-});
-
+// Convert webm to mp4 (browser-recorded fallback)
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 200 * 1024 * 1024 }
@@ -254,7 +266,7 @@ const upload = multer({
 app.post('/convert', upload.single('video'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No video file' });
   const id = crypto.randomBytes(8).toString('hex');
-  const inputPath = path.join(os.tmpdir(), `input_${id}.webm`);
+  const inputPath  = path.join(os.tmpdir(), `input_${id}.webm`);
   const outputPath = path.join(os.tmpdir(), `tiktok_${id}.mp4`);
   try {
     fs.writeFileSync(inputPath, req.file.buffer);
@@ -273,13 +285,13 @@ app.post('/convert', upload.single('video'), async (req, res) => {
         .on('error', reject)
         .run();
     });
-    convertedFiles.set(id, outputPath);
+    downloadFiles.set(id, outputPath);
     setTimeout(() => {
       try { fs.unlinkSync(outputPath); } catch(e) {}
-      convertedFiles.delete(id);
+      downloadFiles.delete(id);
     }, CLEANUP_MS);
-    const host = req.get('host');
     const protocol = req.headers['x-forwarded-proto'] || 'https';
+    const host = req.get('host');
     res.json({ success: true, downloadUrl: `${protocol}://${host}/download/${id}` });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -288,8 +300,9 @@ app.post('/convert', upload.single('video'), async (req, res) => {
   }
 });
 
+// Serve any rendered or converted MP4
 app.get('/download/:id', (req, res) => {
-  const filePath = convertedFiles.get(req.params.id);
+  const filePath = downloadFiles.get(req.params.id);
   if (!filePath || !fs.existsSync(filePath)) {
     return res.status(404).json({ error: 'File not found or expired' });
   }

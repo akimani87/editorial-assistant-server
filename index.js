@@ -202,7 +202,8 @@ app.post('/audio', async (req, res) => {
 
 // Full server-side video render — receives scene data, returns MP4 download URL
 app.post('/render', async (req, res) => {
-  const { scenes, elevenLabsKey, voiceId } = req.body;
+  const { scenes, voiceId } = req.body;
+  const apiKey = req.body.elevenLabsKey || process.env.ELEVENLABS_API_KEY;
   if (!scenes || !scenes.length) {
     return res.status(400).json({ error: 'No scenes provided' });
   }
@@ -215,7 +216,7 @@ app.post('/render', async (req, res) => {
   try {
     for (let i = 0; i < scenes.length; i++) {
       console.log(`Rendering scene ${i + 1}/${scenes.length}...`);
-      const clipPath = await renderScene(scenes[i], voiceId, elevenLabsKey, id, i);
+      const clipPath = await renderScene(scenes[i], voiceId, apiKey, id, i);
       clipPaths.push(clipPath);
     }
 

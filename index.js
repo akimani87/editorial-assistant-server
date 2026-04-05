@@ -9,8 +9,21 @@ const crypto = require('crypto');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const multer = require('multer');
+const { bundle } = require('@remotion/bundler');
+const { renderMedia, selectComposition } = require('@remotion/renderer');
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+
+// Build Remotion bundle once at startup
+let bundleLocation = null;
+async function getBundle() {
+  if (!bundleLocation) {
+    console.log('Building Remotion bundle...');
+    bundleLocation = await bundle(path.resolve('./src/index.jsx'));
+    console.log('Bundle ready');
+  }
+  return bundleLocation;
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -208,60 +221,100 @@ app.post('/audio', async (req, res) => {
 });
 
 // Full server-side video render — receives scene data, returns MP4 download URL
-app.post('/render', async (req, res) => {
-  const { scenes, voiceId } = req.body;
-  const apiKey = req.body.elevenLabsKey || process.env.ELEVENLABS_API_KEY;
-  if (!scenes || !scenes.length) {
-    return res.status(400).json({ error: 'No scenes provided' });
-  }
+app.post('/render', express.json({ limit: '10mb' }), async (req, res) => {
+  const { scenes, elevenLabsKey, voiceId } = req.body;
+  if (!scenes || !scenes.length) return res.status(400).json({ error: 'No scenes' });
+  if (!elevenLabsKey) return res.status(400).json({ error: 'No ElevenLabs key' });
 
-  const id = crypto.randomBytes(8).toString('hex');
-  const tmpDir = os.tmpdir();
-  const outputPath = path.join(tmpDir, `final_${id}.mp4`);
-  const clipPaths = [];
+  const jobId = crypto.randomBytes(8).toString('hex');
+  const tmpDir = path.join(os.tmpdir(), `job_${jobId}`);
+  fs.mkdirSync(tmpDir, { recursive: true });
 
   try {
+    // Generate audio for each scene
+    const enrichedScenes = [];
+    let totalDuration = 0;
+
     for (let i = 0; i < scenes.length; i++) {
-      console.log(`Rendering scene ${i + 1}/${scenes.length}...`);
-      const clipPath = await renderScene(scenes[i], voiceId, apiKey, id, i);
-      clipPaths.push(clipPath);
-    }
+      const scene = scenes[i];
+      console.log(`Generating audio scene ${i + 1}/${scenes.length}`);
 
-    console.log('Concatenating clips...');
-    if (clipPaths.length === 1) {
-      fs.copyFileSync(clipPaths[0], outputPath);
-    } else {
-      const concatFile = path.join(tmpDir, `concat_${id}.txt`);
-      fs.writeFileSync(concatFile, clipPaths.map(p => `file '${p}'`).join('\n'));
-      await new Promise((resolve, reject) => {
-        ffmpeg()
-          .input(concatFile)
-          .inputOptions(['-f concat', '-safe 0'])
-          .outputOptions(['-c copy'])
-          .output(outputPath)
-          .on('end', resolve)
-          .on('error', reject)
-          .run();
+      const audioPath = path.join(tmpDir, `audio_${i}.mp3`);
+      let duration = scene.duration_seconds || 6;
+
+      try {
+        const audioBuffer = await generateElevenLabsAudio(
+          scene.narration,
+          voiceId || 'pNInz6obpgDQGcFmaJgB',
+          elevenLabsKey
+        );
+        fs.writeFileSync(audioPath, audioBuffer);
+
+        // Get actual audio duration
+        duration = await new Promise((resolve) => {
+          ffmpeg.ffprobe(audioPath, (err, meta) => {
+            resolve(err ? scene.duration_seconds || 6 : (meta.format.duration || 6));
+          });
+        });
+      } catch(e) {
+        console.log('Audio failed for scene', i, e.message);
+      }
+
+      enrichedScenes.push({
+        ...scene,
+        audioUrl: fs.existsSync(audioPath) ? `file://${audioPath}` : null,
+        duration,
       });
-      try { fs.unlinkSync(concatFile); } catch(e) {}
+
+      totalDuration += duration;
     }
 
-    downloadFiles.set(id, outputPath);
+    // Calculate total frames
+    const fps = 30;
+    const totalFrames = Math.ceil(totalDuration * fps);
+
+    // Get Remotion bundle
+    const bundleUrl = await getBundle();
+
+    // Get composition
+    const composition = await selectComposition({
+      serveUrl: bundleUrl,
+      id: 'TikTokVideo',
+      inputProps: { scenes: enrichedScenes },
+    });
+
+    // Override duration
+    composition.durationInFrames = totalFrames;
+
+    // Render
+    const outputPath = path.join(os.tmpdir(), `tiktok_${jobId}.mp4`);
+
+    await renderMedia({
+      composition,
+      serveUrl: bundleUrl,
+      codec: 'h264',
+      outputLocation: outputPath,
+      inputProps: { scenes: enrichedScenes },
+      timeoutInMilliseconds: 300000,
+    });
+
+    // Store for download
+    downloadFiles.set(jobId, outputPath);
     setTimeout(() => {
       try { fs.unlinkSync(outputPath); } catch(e) {}
-      downloadFiles.delete(id);
+      try { fs.rmSync(tmpDir, { recursive: true }); } catch(e) {}
+      downloadFiles.delete(jobId);
     }, CLEANUP_MS);
 
-    const proto = req.headers['x-forwarded-proto'] || 'https';
-    const host  = req.get('host');
-    console.log(`Render complete: ${id}`);
-    res.json({ success: true, downloadUrl: `${proto}://${host}/download/${id}` });
+    const host = req.get('host');
+    const protocol = req.headers['x-forwarded-proto'] || 'https';
+    console.log(`Render complete: ${jobId}`);
+    res.json({ success: true, downloadUrl: `${protocol}://${host}/download/${jobId}` });
 
-  } catch (err) {
-    console.error('Render error:', err.message);
+  } catch(err) {
+    console.error('Render error:', err);
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch(e) {}
     res.status(500).json({ error: err.message });
-  } finally {
-    clipPaths.forEach(p => { try { fs.unlinkSync(p); } catch(e) {} });
   }
 });
 

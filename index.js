@@ -90,9 +90,7 @@ async function renderScene(scene, voiceId, apiKey, id, idx) {
   const hasNarration = !!(scene.narration && scene.narration.trim() && apiKey && voiceId);
 
   try {
-    // Fix 1 — request smaller image to reduce memory
-    const imageUrl = scene.imageUrl ? scene.imageUrl.replace(/&w=\d+/, '') + '&w=1080' : null;
-    if (imageUrl) await downloadImage(imageUrl, imgPath);
+    if (hasImage) await downloadImage(scene.imageUrl, imgPath);
     if (hasNarration) {
       const buf = await generateElevenLabsAudio(scene.narration, voiceId, apiKey);
       fs.writeFileSync(audioPath, buf);

@@ -1,22 +1,16 @@
-import { registerRoot, Composition } from 'remotion';
+import { Composition } from 'remotion';
 import { TikTokVideo } from './VideoComposition';
 
-const RemotionRoot = () => {
+export const RemotionRoot = () => {
   return (
-    <>
-      <Composition
-        id="TikTokVideo"
-        component={TikTokVideo}
-        durationInFrames={150}
-        fps={30}
-        width={1080}
-        height={1920}
-        defaultProps={{
-          scenes: [],
-        }}
-      />
-    </>
+    <Composition
+      id="TikTokVideo"
+      component={TikTokVideo}
+      durationInFrames={150}
+      fps={30}
+      width={1080}
+      height={1920}
+      defaultProps={{ scenes: [] }}
+    />
   );
 };
-
-registerRoot(RemotionRoot);

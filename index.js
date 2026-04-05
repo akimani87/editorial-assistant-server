@@ -19,7 +19,7 @@ let bundleLocation = null;
 async function getBundle() {
   if (!bundleLocation) {
     console.log('Building Remotion bundle...');
-    bundleLocation = await bundle(path.resolve('./src/index.jsx'));
+    bundleLocation = await bundle(path.resolve(__dirname, 'src/index.jsx'));
     console.log('Bundle ready');
   }
   return bundleLocation;

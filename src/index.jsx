@@ -1,4 +1,4 @@
-import { Composition } from 'remotion';
+import { registerRoot, Composition } from 'remotion';
 import { TikTokVideo } from './VideoComposition';
 
 export const RemotionRoot = () => {
@@ -14,3 +14,5 @@ export const RemotionRoot = () => {
     />
   );
 };
+
+registerRoot(RemotionRoot);

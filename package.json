@@ -1,18 +1,22 @@
 {
   "name": "editorial-assistant-server",
   "version": "3.0.0",
-  "description": "Server-side audio generator and webm-to-mp4 converter for Editorial Assistant",
+  "description": "Server-side audio generator and Remotion video renderer for Editorial Assistant",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js"
+    "start": "node index.js"
   },
   "dependencies": {
     "express": "^4.18.2",
     "cors": "^2.8.5",
+    "multer": "^1.4.5-lts.1",
     "fluent-ffmpeg": "^2.1.2",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
-    "multer": "^1.4.5-lts.1"
+    "remotion": "^4.0.0",
+    "@remotion/renderer": "^4.0.0",
+    "@remotion/bundler": "^4.0.0",
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0"
   },
   "engines": {
     "node": ">=18.0.0"

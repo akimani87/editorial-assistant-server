@@ -262,7 +262,9 @@ app.post('/render', express.json({ limit: '10mb' }), async (req, res) => {
 
       enrichedScenes.push({
         ...scene,
-        audioUrl: fs.existsSync(audioPath) ? `file://${audioPath}` : null,
+        audioUrl: fs.existsSync(audioPath)
+          ? `${req.headers['x-forwarded-proto'] || 'https'}://${req.get('host')}/temp-audio/${jobId}/audio_${i}.mp3`
+          : null,
         duration,
       });
 
@@ -359,6 +361,14 @@ app.post('/convert', upload.single('video'), async (req, res) => {
   } finally {
     try { fs.unlinkSync(inputPath); } catch(e) {}
   }
+});
+
+// Serve temp audio files for Remotion
+app.get('/temp-audio/:jobId/:filename', (req, res) => {
+  const filePath = path.join(os.tmpdir(), `job_${req.params.jobId}`, req.params.filename);
+  if (!fs.existsSync(filePath)) return res.status(404).end();
+  res.setHeader('Content-Type', 'audio/mpeg');
+  fs.createReadStream(filePath).pipe(res);
 });
 
 // Serve any rendered or converted MP4
